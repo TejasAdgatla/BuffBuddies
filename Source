@@ -6,7 +6,7 @@
 export default async ({ req, res, log, error }) => {
   // CORS Headers
   const headers = {
-    'Access-Control-Allow-Origin': 'https://buffbuddies.synthory.space', // Change to 'https://buffbuddies.synthory.space' in production
+    'Access-Control-Allow-Origin': '*', // Allow all origins (or specify your domain)
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
@@ -15,6 +15,16 @@ export default async ({ req, res, log, error }) => {
   if (req.method === 'OPTIONS') {
     return res.json({ ok: true }, 200, headers);
   }
+
+  // Get Cashfree credentials from environment variables (preferred) or request body (fallback)
+  const getCredentials = (requestBody) => {
+    const parsed = requestBody ? JSON.parse(requestBody) : {};
+    
+    return {
+      appId: process.env.CASHFREE_APP_ID || parsed.appId,
+      secretKey: process.env.CASHFREE_SECRET_KEY || parsed.secretKey,
+    };
+  };
 
   // ROUTE: Create Payment Order
   if (req.method === 'POST' && !req.path.includes('/verify/')) {
@@ -26,19 +36,25 @@ export default async ({ req, res, log, error }) => {
         customerPhone,
         customerEmail,
         orderNote,
-        appId,
-        secretKey,
       } = JSON.parse(req.body);
+
+      // Get credentials from environment or request
+      const { appId, secretKey } = getCredentials(req.body);
 
       log('📝 Creating Cashfree payment order:', {
         orderId,
         amount: orderAmount,
         customer: customerName,
+        usingEnvVars: !!process.env.CASHFREE_APP_ID,
       });
 
       // Validate inputs
-      if (!orderId || !orderAmount || !customerName || !customerPhone || !appId || !secretKey) {
-        throw new Error('Missing required fields');
+      if (!orderId || !orderAmount || !customerName || !customerPhone) {
+        throw new Error('Missing required order fields');
+      }
+
+      if (!appId || !secretKey) {
+        throw new Error('Cashfree credentials not found. Add CASHFREE_APP_ID and CASHFREE_SECRET_KEY as environment variables.');
       }
 
       // Call Cashfree API
@@ -95,13 +111,19 @@ export default async ({ req, res, log, error }) => {
   if (req.method === 'POST' && req.path.includes('/verify/')) {
     try {
       const orderId = req.path.split('/verify/')[1];
-      const { appId, secretKey } = JSON.parse(req.body);
+      
+      // Get credentials from environment or request
+      const { appId, secretKey } = getCredentials(req.body);
 
       log('🔍 Verifying payment for order:', orderId);
 
       // Validate inputs
-      if (!orderId || !appId || !secretKey) {
-        throw new Error('Missing required fields');
+      if (!orderId) {
+        throw new Error('Order ID is required');
+      }
+
+      if (!appId || !secretKey) {
+        throw new Error('Cashfree credentials not found. Add CASHFREE_APP_ID and CASHFREE_SECRET_KEY as environment variables.');
       }
 
       // Call Cashfree API to get order status
