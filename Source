@@ -1,66 +1,156 @@
-import { Client } from 'node-appwrite';
+/**
+ * CASHFREE PAYMENT GATEWAY - APPWRITE FUNCTION
+ * Handles payment order creation and verification
+ */
 
 export default async ({ req, res, log, error }) => {
-  try {
-    // Parse request body
-    const {
-      orderId,
-      orderAmount,
-      customerName,
-      customerPhone,
-      customerEmail,
-      orderNote
-    } = JSON.parse(req.body);
+  // CORS Headers
+  const headers = {
+    'Access-Control-Allow-Origin': 'https://buffbuddies.synthory.space', // Change to 'https://buffbuddies.synthory.space' in production
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
 
-    // Get Cashfree credentials from environment
-    const cashfreeAppId = process.env.CASHFREE_APP_ID;
-    const cashfreeSecretKey = process.env.CASHFREE_SECRET_KEY;
-
-    // Call Cashfree API
-    const cashfreeResponse = await fetch('https://api.cashfree.com/pg/orders', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-client-id': cashfreeAppId,
-        'x-client-secret': cashfreeSecretKey,
-        'x-api-version': '2023-08-01',
-      },
-      body: JSON.stringify({
-        order_id: orderId,
-        order_amount: orderAmount,
-        order_currency: 'INR',
-        customer_details: {
-          customer_id: customerPhone,
-          customer_name: customerName,
-          customer_email: customerEmail || `${customerPhone}@buffbuddies.com`,
-          customer_phone: customerPhone,
-        },
-        order_meta: {
-          return_url: `https://buffbuddies.synthory.space/booking/success?order_id=${orderId}`,
-        },
-        order_note: orderNote,
-      }),
-    });
-
-    const cashfreeData = await cashfreeResponse.json();
-
-    if (!cashfreeResponse.ok) {
-      throw new Error(cashfreeData.message || 'Failed to create payment order');
-    }
-
-    log('Payment order created:', cashfreeData.order_id);
-
-    return res.json({
-      success: true,
-      paymentSessionId: cashfreeData.payment_session_id,
-      orderId: cashfreeData.order_id,
-    });
-
-  } catch (err) {
-    error('Error:', err.message);
-    return res.json({
-      success: false,
-      error: err.message
-    }, 500);
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return res.json({ ok: true }, 200, headers);
   }
+
+  // ROUTE: Create Payment Order
+  if (req.method === 'POST' && !req.path.includes('/verify/')) {
+    try {
+      const {
+        orderId,
+        orderAmount,
+        customerName,
+        customerPhone,
+        customerEmail,
+        orderNote,
+        appId,
+        secretKey,
+      } = JSON.parse(req.body);
+
+      log('📝 Creating Cashfree payment order:', {
+        orderId,
+        amount: orderAmount,
+        customer: customerName,
+      });
+
+      // Validate inputs
+      if (!orderId || !orderAmount || !customerName || !customerPhone || !appId || !secretKey) {
+        throw new Error('Missing required fields');
+      }
+
+      // Call Cashfree API
+      const cashfreeResponse = await fetch('https://api.cashfree.com/pg/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-client-id': appId,
+          'x-client-secret': secretKey,
+          'x-api-version': '2023-08-01',
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          order_amount: orderAmount,
+          order_currency: 'INR',
+          customer_details: {
+            customer_id: customerPhone,
+            customer_name: customerName,
+            customer_email: customerEmail || `${customerPhone}@buffbuddies.com`,
+            customer_phone: customerPhone,
+          },
+          order_meta: {
+            return_url: `https://buffbuddies.synthory.space/booking/success?order_id=${orderId}`,
+          },
+          order_note: orderNote || 'Buff Buddies Booking',
+        }),
+      });
+
+      const cashfreeData = await cashfreeResponse.json();
+
+      if (!cashfreeResponse.ok) {
+        error('❌ Cashfree API error:', cashfreeData);
+        throw new Error(cashfreeData.message || 'Failed to create payment order');
+      }
+
+      log('✅ Payment order created successfully:', cashfreeData.order_id);
+
+      return res.json({
+        success: true,
+        paymentSessionId: cashfreeData.payment_session_id,
+        orderId: cashfreeData.order_id,
+      }, 200, headers);
+
+    } catch (err) {
+      error('❌ Error creating payment order:', err.message);
+      return res.json({
+        success: false,
+        error: err.message || 'Failed to create payment order'
+      }, 500, headers);
+    }
+  }
+
+  // ROUTE: Verify Payment
+  if (req.method === 'POST' && req.path.includes('/verify/')) {
+    try {
+      const orderId = req.path.split('/verify/')[1];
+      const { appId, secretKey } = JSON.parse(req.body);
+
+      log('🔍 Verifying payment for order:', orderId);
+
+      // Validate inputs
+      if (!orderId || !appId || !secretKey) {
+        throw new Error('Missing required fields');
+      }
+
+      // Call Cashfree API to get order status
+      const cashfreeResponse = await fetch(
+        `https://api.cashfree.com/pg/orders/${orderId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-client-id': appId,
+            'x-client-secret': secretKey,
+            'x-api-version': '2023-08-01',
+          },
+        }
+      );
+
+      const cashfreeData = await cashfreeResponse.json();
+
+      if (!cashfreeResponse.ok) {
+        error('❌ Cashfree verification error:', cashfreeData);
+        throw new Error('Payment verification failed');
+      }
+
+      log('✅ Payment verified:', {
+        orderId: cashfreeData.order_id,
+        status: cashfreeData.order_status,
+        amount: cashfreeData.order_amount,
+      });
+
+      return res.json({
+        success: true,
+        order_status: cashfreeData.order_status,
+        order_amount: cashfreeData.order_amount,
+        cf_order_id: cashfreeData.cf_order_id,
+        transactionId: cashfreeData.order_id,
+      }, 200, headers);
+
+    } catch (err) {
+      error('❌ Error verifying payment:', err.message);
+      return res.json({
+        success: false,
+        error: err.message || 'Payment verification failed'
+      }, 500, headers);
+    }
+  }
+
+  // Invalid route
+  return res.json({
+    success: false,
+    error: 'Invalid route'
+  }, 404, headers);
 };
