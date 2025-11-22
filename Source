@@ -1,0 +1,66 @@
+import { Client } from 'node-appwrite';
+
+export default async ({ req, res, log, error }) => {
+  try {
+    // Parse request body
+    const {
+      orderId,
+      orderAmount,
+      customerName,
+      customerPhone,
+      customerEmail,
+      orderNote
+    } = JSON.parse(req.body);
+
+    // Get Cashfree credentials from environment
+    const cashfreeAppId = process.env.CASHFREE_APP_ID;
+    const cashfreeSecretKey = process.env.CASHFREE_SECRET_KEY;
+
+    // Call Cashfree API
+    const cashfreeResponse = await fetch('https://api.cashfree.com/pg/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': cashfreeAppId,
+        'x-client-secret': cashfreeSecretKey,
+        'x-api-version': '2023-08-01',
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        order_amount: orderAmount,
+        order_currency: 'INR',
+        customer_details: {
+          customer_id: customerPhone,
+          customer_name: customerName,
+          customer_email: customerEmail || `${customerPhone}@buffbuddies.com`,
+          customer_phone: customerPhone,
+        },
+        order_meta: {
+          return_url: `https://buffbuddies.synthory.space/booking/success?order_id=${orderId}`,
+        },
+        order_note: orderNote,
+      }),
+    });
+
+    const cashfreeData = await cashfreeResponse.json();
+
+    if (!cashfreeResponse.ok) {
+      throw new Error(cashfreeData.message || 'Failed to create payment order');
+    }
+
+    log('Payment order created:', cashfreeData.order_id);
+
+    return res.json({
+      success: true,
+      paymentSessionId: cashfreeData.payment_session_id,
+      orderId: cashfreeData.order_id,
+    });
+
+  } catch (err) {
+    error('Error:', err.message);
+    return res.json({
+      success: false,
+      error: err.message
+    }, 500);
+  }
+};
